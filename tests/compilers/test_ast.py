@@ -10,7 +10,7 @@ from hy.compiler import hy_compile
 from hy.importer import import_buffer_to_hst
 from hy.errors import HyCompileError, HyTypeError
 from hy.lex.exceptions import LexException
-from hy._compat import PY3
+from hy._compat import PY3, PY35, PY36
 
 import ast
 
@@ -254,7 +254,7 @@ def test_ast_require():
 def test_ast_no_pointless_imports():
     def contains_import_from(code):
         return any([isinstance(node, ast.ImportFrom)
-                   for node in can_compile(code).body])
+                    for node in can_compile(code).body])
     # `reduce` is a builtin in Python 2, but not Python 3.
     # The version of `map` that returns an iterator is a builtin in
     # Python 3, but not Python 2.
@@ -574,6 +574,24 @@ def test_defn():
     cant_compile("(defn \"hy\" [] 1)")
     cant_compile("(defn :hy [] 1)")
     can_compile("(defn &hy [] 1)")
+
+
+if PY35:
+    def test_async():
+        """Ensure all async stuff works."""
+        can_compile("(async-fn [] (await 1))")
+        can_compile("(async-fn [] (async-for [x xx] (x)))")
+        can_compile("(async-fn [] (async-with [x xx] (x)))")
+        can_compile("(async-defn hy [] 1)")
+        can_compile("(async-defn hy [] (await x))")
+
+if PY36:
+    def test_async_comp():
+        """Ensure that asynchronous generators work"""
+        can_compile("(async-fn [] (async-genexpr x [x xx]))")
+        can_compile("(async-fn [] (async-list-comp x [x xx]))")
+        can_compile("(async-fn [] (async-dict-comp x x [x xx]))")
+        can_compile("(async-fn [] (async-set-comp x [x xx]))")
 
 
 def test_setv_builtins():

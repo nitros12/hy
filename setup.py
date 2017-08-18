@@ -3,7 +3,8 @@
 # This file is part of Hy, which is free software licensed under the Expat
 # license. See the LICENSE.
 
-import sys, os
+import sys
+import os
 
 from setuptools import find_packages, setup
 from setuptools.command.install import install
@@ -18,10 +19,12 @@ long_description = """Hy is a Python <--> Lisp layer. It helps
 make things work nicer, and lets Python and the Hy lisp variant play
 nice together. """
 
+
 class Install(install):
     def run(self):
         # Import each Hy module to ensure it's compiled.
-        import os, importlib
+        import os
+        import importlib
         for dirpath, _, filenames in sorted(os.walk("hy")):
             for filename in sorted(filenames):
                 if filename.endswith(".hy"):
@@ -30,7 +33,8 @@ class Install(install):
                         "." + filename[:-len(".hy")])
         install.run(self)
 
-install_requires = ['rply>=0.7.5', 'astor>=0.5', 'clint>=0.4']
+
+install_requires = ['rply>=0.7.5', 'astunparse>=1.5.0', 'clint>=0.4']
 if os.name == 'nt':
     install_requires.append('pyreadline>=2.1')
 
