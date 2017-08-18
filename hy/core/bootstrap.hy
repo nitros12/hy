@@ -20,6 +20,16 @@
   "error out properly within a macro"
   `(raise (hy.errors.HyMacroExpansionError ~location ~reason)))
 
+
+(defmacro async-defn [name lambda-list &rest body]
+  "define an async function `name` with signature `lambda-list` and body `body`"
+  (import hy)
+  (if (not (= (type name) hy.HySymbol))
+    (macro-error name "async-defn takes a name as first argument"))
+  (if (not (isinstance lambda-list hy.HyList))
+    (macro-error name "async-defn takes a paramater list as second argument"))
+  `(setv ~name (async-fn ~lambda-list ~@body)))
+
 (defmacro defn [name lambda-list &rest body]
   "define a function `name` with signature `lambda-list` and body `body`"
   (import hy)

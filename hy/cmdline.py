@@ -11,7 +11,7 @@ import sys
 import os
 import importlib
 
-import astor.codegen
+import astunparse
 
 import hy
 
@@ -47,6 +47,7 @@ class HyQuitter(object):
         except:
             pass
         raise SystemExit(code)
+
 
 builtins.quit = HyQuitter('quit')
 builtins.exit = HyQuitter('exit')
@@ -170,6 +171,7 @@ def ideas_macro():
 
 """)])
 
+
 require("hy.cmdline", "__console__", all_macros=True)
 require("hy.cmdline", "__main__", all_macros=True)
 
@@ -292,9 +294,9 @@ def cmdline_handler(scriptname, argv):
     module_args = []
     if "-m" in argv:
         mloc = argv.index("-m")
-        if len(argv) > mloc+2:
-            module_args = argv[mloc+2:]
-            argv = argv[:mloc+2]
+        if len(argv) > mloc + 2:
+            module_args = argv[mloc + 2:]
+            argv = argv[:mloc + 2]
 
     options = parser.parse_args(argv[1:])
 
@@ -416,9 +418,9 @@ def hy2py_main():
 
     if not options.without_python:
         if PY3 and platform.system() == "Windows":
-            _print_for_windows(astor.codegen.to_source(_ast))
+            _print_for_windows(astunparse.unparse(_ast))
         else:
-            print(astor.codegen.to_source(_ast))
+            print(astunparse.unparse(_ast))
 
     parser.exit(0)
 

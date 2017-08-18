@@ -12,7 +12,7 @@ from hy.lex.parser import hy_symbol_mangle
 
 import hy.macros
 from hy._compat import (
-    str_type, string_types, bytes_type, long_type, PY3, PY34, PY35,
+    str_type, string_types, bytes_type, long_type, PY3, PY34, PY35, PY36,
     raise_empty)
 from hy.macros import require, macroexpand, tag_macroexpand
 import hy.importer
@@ -90,7 +90,7 @@ def ast_str(foobar):
     return "hy_%s" % (str(foobar).replace("-", "_"))
 
 
-def builds(_type):
+def builds(_type, **options):
 
     unpythonic_chars = ["-"]
     really_ok = ["-"]
@@ -100,14 +100,20 @@ def builds(_type):
                             "translated strings... `%s' sucks." % (_type))
 
     def _dec(fn):
-        _compile_table[_type] = fn
+        if options:
+            def builder(*args, **kwargs):
+                kwargs.update(options)
+                return fn(*args, **kwargs)
+            _compile_table[_type] = builder
+        else:
+            _compile_table[_type] = fn
         return fn
     return _dec
 
 
-def builds_if(_type, condition):
+def builds_if(_type, condition, **kwargs):
     if condition:
-        return builds(_type)
+        return builds(_type, **kwargs)
     else:
         return lambda fn: fn
 
@@ -244,6 +250,8 @@ class Result(object):
                 var.arg = new_name
             elif isinstance(var, ast.FunctionDef):
                 var.name = new_name
+            elif isinstance(var, ast.AsyncFunctionDef) and PY35:
+                var.name = new_name
             else:
                 raise TypeError("Don't know how to rename a %s!" % (
                     var.__class__.__name__))
@@ -322,9 +330,9 @@ def _raise_wrong_args_number(expression, error):
                                len(expression)))
 
 
-def checkargs(exact=None, min=None, max=None, even=None, multiple=None):
+def checkargs(exact=None, min=None, max=None, even=None, multiple=None, **kwargs):
     def _dec(fn):
-        def checker(self, expression):
+        def checker(self, expression, **kwargs):
             if exact is not None and (len(expression) - 1) != exact:
                 _raise_wrong_args_number(
                     expression, "`%%s' needs %d arguments, got %%d" % exact)
@@ -354,7 +362,7 @@ def checkargs(exact=None, min=None, max=None, even=None, multiple=None):
                         expression,
                         "`%%s' needs %s arguments, got %%d" % choices)
 
-            return fn(self, expression)
+            return fn(self, expression, **kwargs)
 
         return checker
     return _dec
@@ -399,20 +407,20 @@ class HyASTCompiler(object):
         for module, names in self.imports.items():
             if None in names:
                 e = HyExpression([
-                        HySymbol("import"),
-                        HySymbol(module),
-                    ]).replace(expr)
+                    HySymbol("import"),
+                    HySymbol(module),
+                ]).replace(expr)
                 spoof_positions(e)
                 ret += self.compile(e)
             names = sorted(name for name in names if name)
             if names:
                 e = HyExpression([
-                        HySymbol("import"),
-                        HyList([
-                            HySymbol(module),
-                            HyList([HySymbol(name) for name in names])
-                        ])
-                    ]).replace(expr)
+                    HySymbol("import"),
+                    HyList([
+                        HySymbol(module),
+                        HyList([HySymbol(name) for name in names])
+                    ])
+                ]).replace(expr)
                 spoof_positions(e)
                 ret += self.compile(e)
         self.imports = defaultdict(set)
@@ -744,6 +752,24 @@ class HyASTCompiler(object):
         return imports, HyExpression([HySymbol(name),
                                       form]).replace(form), False
 
+    @builds_if("await", PY35)
+    @checkargs(max=1)
+    def compile_await_expression(self, expr):
+        expr.pop(0)  # "await"
+        ret = Result(contains_yield=True)
+
+        value = None
+        if expr != []:
+            ret += self.compile(expr.pop(0))
+            value = ret.force_expr
+
+        ret += ast.Await(
+            value=value,
+            lineno=expr.start_line,
+            col_offset=expr.start_column)
+
+        return ret
+
     @builds("quote")
     @builds("quasiquote")
     @checkargs(exact=1)
@@ -1036,7 +1062,7 @@ class HyASTCompiler(object):
         if expression:
             orel_expr = expression.pop(0)
             if isinstance(orel_expr, HyExpression) and isinstance(orel_expr[0],
-               HySymbol) and orel_expr[0] == 'if*':
+                                                                  HySymbol) and orel_expr[0] == 'if*':
                 # Nested ifs: don't waste temporaries
                 root = self.temp_if is None
                 nested = True
@@ -1085,7 +1111,7 @@ class HyASTCompiler(object):
 
             # and of the else clause
             if not nested or not orel.stmts or (not root and
-               var != self.temp_if):
+                                                var != self.temp_if):
                 orel += ast.Assign(targets=[name],
                                    value=orel.force_expr,
                                    lineno=expression.start_line,
@@ -1439,8 +1465,9 @@ class HyASTCompiler(object):
         return ret + fn
 
     @builds("with*")
+    @builds_if("async_with*", PY35, async=True)
     @checkargs(min=2)
-    def compile_with_expression(self, expr):
+    def compile_with_expression(self, expr, async=False):
         expr.pop(0)  # with*
 
         args = expr.pop(0)
@@ -1472,11 +1499,12 @@ class HyASTCompiler(object):
                            lineno=expr.start_line,
                            col_offset=expr.start_column)
 
-        the_with = ast.With(context_expr=ctx.force_expr,
-                            lineno=expr.start_line,
-                            col_offset=expr.start_column,
-                            optional_vars=thing,
-                            body=body.stmts)
+        with_type = ast.AsyncWith if async else ast.With
+        the_with = with_type(context_expr=ctx.force_expr,
+                             lineno=expr.start_line,
+                             col_offset=expr.start_column,
+                             optional_vars=thing,
+                             body=body.stmts)
 
         if PY3:
             the_with.items = [ast.withitem(context_expr=ctx.force_expr,
@@ -1504,7 +1532,7 @@ class HyASTCompiler(object):
                          ctx=ast.Load())
         return ret
 
-    def _compile_generator_iterables(self, trailers):
+    def _compile_generator_iterables(self, trailers, async=False):
         """Helper to compile the "trailing" parts of comprehensions:
         generators and conditions"""
 
@@ -1525,7 +1553,7 @@ class HyASTCompiler(object):
                 target=target,
                 iter=gen_res.force_expr,
                 ifs=[],
-                is_async=False))
+                is_async=async))
 
         if cond.expr:
             gen[-1].ifs.append(cond.expr)
@@ -1533,8 +1561,9 @@ class HyASTCompiler(object):
         return gen_res + cond, gen
 
     @builds("list_comp")
+    @builds_if("async_list_comp", PY36, async=True)
     @checkargs(min=2, max=3)
-    def compile_list_comprehension(self, expr):
+    def compile_list_comprehension(self, expr, async=False):
         # (list-comp expr (target iter) cond?)
         expr.pop(0)
         expression = expr.pop(0)
@@ -1543,7 +1572,7 @@ class HyASTCompiler(object):
         if not isinstance(gen_gen, HyList):
             raise HyTypeError(gen_gen, "Generator expression must be a list.")
 
-        gen_res, gen = self._compile_generator_iterables(expr)
+        gen_res, gen = self._compile_generator_iterables(expr, async=async)
 
         if len(gen) == 0:
             raise HyTypeError(gen_gen, "Generator expression cannot be empty.")
@@ -1559,9 +1588,10 @@ class HyASTCompiler(object):
         return ret
 
     @builds("set_comp")
+    @builds_if("async_set_comp", PY36, async=True)
     @checkargs(min=2, max=3)
-    def compile_set_comprehension(self, expr):
-        ret = self.compile_list_comprehension(expr)
+    def compile_set_comprehension(self, expr, async=False):
+        ret = self.compile_list_comprehension(expr, async=async)
         expr = ret.expr
         ret.expr = ast.SetComp(
             lineno=expr.lineno,
@@ -1572,13 +1602,14 @@ class HyASTCompiler(object):
         return ret
 
     @builds("dict_comp")
+    @builds_if("async_dict_comp", PY36)
     @checkargs(min=3, max=4)
-    def compile_dict_comprehension(self, expr):
+    def compile_dict_comprehension(self, expr, async=False):
         expr.pop(0)  # dict-comp
         key = expr.pop(0)
         value = expr.pop(0)
 
-        gen_res, gen = self._compile_generator_iterables(expr)
+        gen_res, gen = self._compile_generator_iterables(expr, async=async)
 
         compiled_key = self.compile(key)
         compiled_value = self.compile(value)
@@ -1593,8 +1624,9 @@ class HyASTCompiler(object):
         return ret
 
     @builds("genexpr")
-    def compile_genexpr(self, expr):
-        ret = self.compile_list_comprehension(expr)
+    @builds_if("async_genexpr", PY36, async=True)
+    def compile_genexpr(self, expr, async=False):
+        ret = self.compile_list_comprehension(expr, async=async)
         expr = ret.expr
         ret.expr = ast.GeneratorExp(
             lineno=expr.lineno,
@@ -1718,7 +1750,7 @@ class HyASTCompiler(object):
                 else:
                     node = value.expr
                 current.append(make_assign(value.force_expr, value.force_expr))
-                if i == len(values)-1:
+                if i == len(values) - 1:
                     # Skip a redundant 'if'.
                     break
                 if operator == "and":
@@ -2099,9 +2131,10 @@ class HyASTCompiler(object):
         return result
 
     @builds("for*")
+    @builds_if("async_for*", PY35, async=True)
     @checkargs(min=1)
-    def compile_for_expression(self, expression):
-        expression.pop(0)  # for
+    def compile_for_expression(self, expression, async=False):
+        expression.pop(0)  # for/ async_for
 
         args = expression.pop(0)
 
@@ -2137,12 +2170,14 @@ class HyASTCompiler(object):
         body = self._compile_branch(expression)
         body += body.expr_as_stmt()
 
-        ret += ast.For(lineno=expression.start_line,
-                       col_offset=expression.start_column,
-                       target=target,
-                       iter=ret.force_expr,
-                       body=body.stmts,
-                       orelse=orel.stmts)
+        for_type = ast.AsyncFor if async else ast.For
+
+        ret += for_type(lineno=expression.start_line,
+                        col_offset=expression.start_column,
+                        target=target,
+                        iter=ret.force_expr,
+                        body=body.stmts,
+                        orelse=orel.stmts)
 
         ret.contains_yield = body.contains_yield
 
@@ -2190,8 +2225,9 @@ class HyASTCompiler(object):
     # The starred version is for internal use (particularly, in the
     # definition of `defn`). It ensures that a FunctionDef is
     # produced rather than a Lambda.
+    @builds_if("async_fn", PY35, async=True)
     @checkargs(min=1)
-    def compile_function_def(self, expression):
+    def compile_function_def(self, expression, async=False):
         force_functiondef = expression.pop(0) == "fn*"
 
         arglist = expression.pop(0)
@@ -2295,12 +2331,14 @@ class HyASTCompiler(object):
 
         name = self.get_anon_fn()
 
-        ret += ast.FunctionDef(name=name,
-                               lineno=expression.start_line,
-                               col_offset=expression.start_column,
-                               args=args,
-                               body=body.stmts,
-                               decorator_list=[])
+        fn_def = ast.AsyncFunctionDef if async else ast.FunctionDef
+
+        ret += fn_def(name=name,
+                      lineno=expression.start_line,
+                      col_offset=expression.start_column,
+                      args=args,
+                      body=body.stmts,
+                      decorator_list=[])
 
         ast_name = ast.Name(id=name,
                             arg=name,

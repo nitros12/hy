@@ -23,11 +23,12 @@ import sys
 PY3 = sys.version_info[0] >= 3
 PY34 = sys.version_info >= (3, 4)
 PY35 = sys.version_info >= (3, 5)
+PY36 = sys.version_info >= (3, 6)
 
-str_type     = str   if PY3 else unicode      # NOQA
-bytes_type   = bytes if PY3 else str          # NOQA
-long_type    = int   if PY3 else long         # NOQA
-string_types = str   if PY3 else basestring   # NOQA
+str_type = str if PY3 else unicode      # NOQA
+bytes_type = bytes if PY3 else str          # NOQA
+long_type = int if PY3 else long         # NOQA
+string_types = str if PY3 else basestring   # NOQA
 
 if PY3:
     exec('def raise_empty(t, *args): raise t(*args) from None')

@@ -8,6 +8,7 @@
 
 
 (import [hy.models [HyList HySymbol]])
+(import [hy._compat [PY35]])
 
 (defmacro as-> [head name &rest rest]
   "Expands to sequence of assignments to the provided name, starting with head.
@@ -19,6 +20,27 @@
          ~name ~head
          ~@(interleave (repeat name) rest))
      ~name))
+
+
+(if PY35
+  (defmacro async-with [args &rest body]
+    "shorthand for nested async-with* loops:
+    (async-with [x foo y bar] baz) ->
+    (async-with* [x foo]
+      (async-with* [y bar]
+        baz))"
+
+    (if (not (empty? args))
+      (do
+       (if (>= (len args) 2)
+         (do
+          (setv p1 (.pop args 0)
+                p2 (.pop args 0)
+                primary [p1 p2])
+          `(async-with* [~@primary] (async-with ~args ~@body)))
+         `(async-with* [~@args] ~@body)))
+      `(do ~@body))))
+
 
 (defmacro with [args &rest body]
   "shorthand for nested with* loops:
@@ -69,6 +91,32 @@
        (.append latest-branch cur-branch)
        (setv latest-branch cur-branch))
      root)))
+
+
+(if PY35
+  (defmacro async-for [args &rest body]
+    "shorthand for nested async-for loops:
+    (async-for [x foo
+                y bar]
+            baz) ->
+    (async-for* [x foo]
+      (async-for* [y bar]
+        baz))"
+    (setv body (list body))
+    (if (empty? body)
+      (macro-error None "`async-for' requires a body to evaluate"))
+    (setv lst (get body -1))
+    (setv belse (if (and (isinstance lst HyExpression) (= (get lst 0) "else"))
+                  [(body.pop)]
+                  []))
+    (if
+        (odd? (len args)) (macro-error args "`async-for' requires an even number of args.")
+        (empty? body)     (macro-error None "`async-for' requires a body to evaluate")
+        (empty? args)     `(do ~@body ~@belse)
+        (= (len args) 2)  `(async-for* [~@args] (do ~@body) ~@belse)
+        (do
+         (setv alist (cut args 0 None 2))
+         `(async-for* [(, ~@alist) (genexpr (, ~@alist) [~@args])] (do ~@body) ~@belse)))))
 
 
 (defmacro for [args &rest body]
