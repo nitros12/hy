@@ -2228,7 +2228,8 @@ class HyASTCompiler(object):
     @builds_if("async_fn", PY35, async=True)
     @checkargs(min=1)
     def compile_function_def(self, expression, async=False):
-        force_functiondef = expression.pop(0) == "fn*"
+        force_functiondef = (expression.pop(0) == "fn*") or async
+        # also force (Async)FunctionDef if this is an async function
 
         arglist = expression.pop(0)
         if not isinstance(arglist, HyList):
